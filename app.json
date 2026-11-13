@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Martins Advogados",
+    "slug": "martins-advogados",
+    "version": "1.0.0",
+    "scheme": "martinsadvogados",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "br.com.martinsadvogados.app"
+    },
+    "android": {
+      "package": "br.com.martinsadvogados.app"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-document-picker",
+      "expo-sharing",
+      "expo-status-bar"
+    ]
+  }
+}
