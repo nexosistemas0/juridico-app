@@ -1,85 +1,1414 @@
-import {useState,useEffect,useRef,type FormEvent,type ReactNode} from 'react';
-import {Scale,LayoutDashboard,FolderOpen,Users,CalendarDays,MessageSquare,Bell,LogOut,ArrowUpRight,ArrowLeft,Plus,Search,ChevronRight,ShieldCheck,Check,RefreshCw,FileText,Send,Download,Trash2,Pencil,Settings,Menu,X,Copy,Clock3} from 'lucide-react';
-import {api,RequestError,date,cnj,type Row} from './api';
-
-function Button({children,onClick,secondary=false,disabled=false,type='button'}:{children:ReactNode;onClick?:()=>void;secondary?:boolean;disabled?:boolean;type?:'button'|'submit'}){return <button type={type} className={secondary?'button secondary':'button'} onClick={onClick} disabled={disabled}>{children}</button>}
-function Field({label,name,type='text',required=false,value,options,wide=false,minLength}:{label:string;name:string;type?:string;required?:boolean;value?:any;options?:{value:string;label:string}[];wide?:boolean;minLength?:number}){return <label className={wide?'field wide':'field'}><span>{label}{required?' *':''}</span>{options?<select name={name} defaultValue={value||''} required={required}>{options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select>:type==='textarea'?<textarea name={name} defaultValue={value||''} rows={3} required={required}/>:<input name={name} type={type} defaultValue={value||''} required={required} minLength={minLength} maxLength={type==='password'?72:undefined}/>}</label>}
-function Empty({title,description}:{title:string;description:string}){return <div className="empty"><FolderOpen size={30}/><h3>{title}</h3><p>{description}</p></div>}
-function Status({value}:{value:string}){return <span className={`status ${value==='Arquivado'?'muted':''}`}><i/>{value||'Em andamento'}</span>}
-function Modal({title,children,close}:{title:string;children:ReactNode;close:()=>void}){
- const ref=useRef<HTMLDialogElement>(null);useEffect(()=>{ref.current?.showModal();},[]);
- return <dialog ref={ref} onCancel={close} onClick={e=>{if(e.target===ref.current)close()}}><div className="modal-head"><h2>{title}</h2><button className="icon" onClick={close} aria-label="Fechar"><X/></button></div>{children}</dialog>
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  AppState,
+  BackHandler,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Share,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import {
+  api,
+  ApiError,
+  clearSession,
+  restoreSession,
+  saveSession,
+  setExpiredHandler,
+  shareDocument,
+} from "./api";
+import { activationToken, cnj, formatDate, type Row } from "./domain";
+import {
+  Button,
+  Card,
+  colors,
+  Empty,
+  Fields,
+  FormModal,
+  Loading,
+  Muted,
+  s,
+  Title,
+  type FieldSpec,
+} from "./ui";
+const nameField: FieldSpec = {
+  name: "name",
+  label: "Nome completo",
+  required: true,
+};
+const emailField: FieldSpec = {
+  name: "email",
+  label: "E-mail",
+  keyboard: "email-address",
+  required: true,
+};
+const passwordField: FieldSpec = {
+  name: "password",
+  label: "Senha (mínimo 10 caracteres)",
+  secure: true,
+  required: true,
+};
+const phoneField: FieldSpec = {
+  name: "phone",
+  label: "Telefone",
+  keyboard: "phone-pad",
+};
+const dateField: FieldSpec = {
+  name: "date",
+  label: "Data (AAAA-MM-DD)",
+  placeholder: "2027-01-20",
+  required: true,
+};
+const movementFields: FieldSpec[] = [
+  { name: "title", label: "Título", required: true },
+  dateField,
+  {
+    name: "description",
+    label: "Orientação ao cliente",
+    multiline: true,
+    required: true,
+  },
+];
+const hearingFields: FieldSpec[] = [
+  { name: "type", label: "Tipo de audiência", required: true },
+  dateField,
+  {
+    name: "hour",
+    label: "Horário de Brasília (HH:MM)",
+    placeholder: "14:30",
+    required: true,
+  },
+  { name: "place", label: "Local" },
+  { name: "room", label: "Sala" },
+  { name: "meeting_link", label: "Link da sala virtual (HTTPS)" },
+  { name: "guidelines", label: "Orientações", multiline: true },
+];
+const initialStrings = (row: Row, fields: FieldSpec[]) =>
+  Object.fromEntries(
+    fields.map((f) => [
+      f.name,
+      f.name === "date"
+        ? String(row[f.name] || "").slice(0, 10)
+        : f.name === "hour"
+          ? String(row[f.name] || "").slice(0, 5)
+          : String(row[f.name] || ""),
+    ]),
+  );
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="light" />
+      <Root />
+    </SafeAreaProvider>
+  );
 }
-function Auth({onLogin}:{onLogin:(u:Row)=>void}){
- const [mode,setMode]=useState(location.pathname==='/ativar'?'activate':'login'),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const token=useRef(location.hash.slice(1));useEffect(()=>{if(location.hash)history.replaceState(null,'',location.pathname)},[]);
- async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);setError('');const d=Object.fromEntries(new FormData(e.currentTarget));try{onLogin(await api(`/auth/${mode}`,'POST',mode==='activate'?{token:token.current,password:d.password}:d));history.replaceState(null,'','/');}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
- return <div className="auth-layout"><section className="auth-story"><div className="brand"><Scale/><span>nexo<span className="brand-light"> jurídico</span></span></div><div><span className="eyebrow">PROXIMIDADE EM CADA ETAPA</span><h1>Mais clareza.<br/>Mais confiança.<br/><em>Mais perto.</em></h1><p>Um espaço para conectar advogados e clientes, acompanhar processos e manter as conversas em dia.</p><div className="story-line"><span>01</span> Seu processo, organizado.</div><div className="story-line"><span>02</span> Seu advogado, por perto.</div><div className="story-line"><span>03</span> Cada atualização, no mesmo lugar.</div></div><footer><ShieldCheck size={16}/> Acesso individual. Informações protegidas.</footer></section><section className="auth-form"><div className="auth-box"><span className="eyebrow">BEM-VINDO AO SEU PORTAL</span><h2>{mode==='login'?'Vamos continuar?':mode==='register'?'Seu escritório, conectado.':'Seu acesso começa aqui.'}</h2><p>{mode==='login'?'Entre para acompanhar o que importa.':mode==='register'?'Crie sua conta de advogado e organize seus atendimentos.':'Defina sua senha para acompanhar os processos vinculados pelo seu advogado.'}</p>{mode!=='activate'&&<div className="segmented"><button className={mode==='login'?'active':''} onClick={()=>{setMode('login');setError('')}}>Entrar</button><button className={mode==='register'?'active':''} onClick={()=>{setMode('register');setError('')}}>Cadastrar advogado</button></div>}<form onSubmit={submit}>{mode==='register'&&<><Field label="Nome completo" name="name" required/><Field label="OAB / UF" name="oab" required/><Field label="Telefone" name="phone" type="tel"/></>}{mode!=='activate'&&<Field label="E-mail" name="email" type="email" required/>}<Field label={mode==='activate'?'Crie sua senha (mínimo 10 caracteres)':'Senha'} name="password" type="password" minLength={mode==='login'?1:10} required/>{error&&<p role="alert" className="error">{error}</p>}<Button type="submit" disabled={busy}>{busy?'Aguarde…':mode==='login'?'Acessar meu portal':mode==='register'?'Criar minha conta':'Ativar meu acesso'}<ArrowUpRight size={18}/></Button></form><p className="auth-note">É cliente? Seu advogado cadastra você e compartilha um link para ativar sua conta.</p></div><span className="copyright">Nexo Jurídico · Informação que aproxima.</span></section></div>
+function Root() {
+  const [user, setUser] = useState<Row | null>(null),
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState(""),
+    [invitation, setInvitation] = useState("");
+  const boot = useCallback(async () => {
+    setError("");
+    setLoading(true);
+    try {
+      if (await restoreSession()) setUser(await api("/auth/me"));
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 401))
+        setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    setExpiredHandler(() => {
+      setUser(null);
+      setInvitation("");
+    });
+    boot();
+    const receive = (url: string) => {
+      if (!url.startsWith("martinsadvogados://ativar")) return;
+      try {
+        setInvitation(activationToken(url));
+      } catch {
+        Alert.alert("Convite inválido", "Solicite um novo link ao advogado.");
+      }
+    };
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url) receive(url);
+      })
+      .catch(() => {});
+    const sub = Linking.addEventListener("url", (e) => receive(e.url));
+    return () => {
+      sub.remove();
+      setExpiredHandler(() => {});
+    };
+  }, [boot]);
+  if (loading)
+    return (
+      <SafeAreaView style={s.screen}>
+        <Loading />
+      </SafeAreaView>
+    );
+  if (error)
+    return (
+      <SafeAreaView style={s.screen}>
+        <View style={s.content}>
+          <Title>Martins Advogados</Title>
+          <Text style={s.error}>{error}</Text>
+          <Button label="Tentar novamente" onPress={boot} />
+          <Button
+            label="Voltar ao login"
+            secondary
+            onPress={() => {
+              clearSession()
+                .then(() => {
+                  setUser(null);
+                  setError("");
+                })
+                .catch((e) => setError(e.message));
+            }}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  if (!user)
+    return (
+      <Auth
+        key={invitation}
+        invitation={invitation}
+        onLogin={(u) => {
+          setInvitation("");
+          setUser(u);
+        }}
+      />
+    );
+  return (
+    <Portal
+      key={user.id}
+      user={user}
+      updateUser={setUser}
+      onLogout={() => setUser(null)}
+    />
+  );
 }
-const nav=[{id:'overview',label:'Visão geral',icon:LayoutDashboard},{id:'processes',label:'Processos',icon:FolderOpen},{id:'clients',label:'Clientes',icon:Users},{id:'hearings',label:'Audiências',icon:CalendarDays},{id:'messages',label:'Mensagens',icon:MessageSquare},{id:'notifications',label:'Notificações',icon:Bell}];
-export default function App(){
- const [user,setUser]=useState<Row|null>(null),[loading,setLoading]=useState(true),[initialError,setInitialError]=useState('');
- const check=()=>{setLoading(true);api('/auth/me').then(setUser).catch(e=>{if(e.status!==401)setInitialError(e.message)}).finally(()=>setLoading(false))};
- useEffect(()=>{check();const expired=()=>setUser(null);window.addEventListener('session-expired',expired);return()=>window.removeEventListener('session-expired',expired)},[]);
- if(loading)return <div className="loading"><Scale/><p>Preparando seu portal…</p></div>;
- if(initialError&&!user)return <div className="loading"><p className="error">{initialError}</p><Button onClick={()=>{setInitialError('');check()}}>Tentar novamente</Button></div>;
- if(!user)return <Auth onLogin={setUser}/>;
- return <Portal user={user} logout={()=>setUser(null)} updateUser={setUser}/>;
+function Auth({
+  invitation,
+  onLogin,
+}: {
+  invitation: string;
+  onLogin: (u: Row) => void;
+}) {
+  const [mode, setMode] = useState<"login" | "register" | "activate">(
+      invitation ? "activate" : "login",
+    ),
+    [values, setValues] = useState<Record<string, string>>({
+      token: invitation,
+    }),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const fields =
+    mode === "activate"
+      ? [
+          { name: "token", label: "Link ou código do convite", required: true },
+          passwordField,
+        ]
+      : mode === "register"
+        ? [
+            nameField,
+            emailField,
+            passwordField,
+            { name: "oab", label: "OAB / UF", required: true },
+            phoneField,
+          ]
+        : [emailField, { ...passwordField, label: "Senha" }];
+  async function submit() {
+    if (fields.some((f) => f.required && !values[f.name]?.trim())) {
+      setError("Preencha todos os campos obrigatórios.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api(
+        `/auth/${mode}`,
+        "POST",
+        mode === "activate"
+          ? { token: activationToken(values.token), password: values.password }
+          : values,
+      );
+      await saveSession(result.sessionToken);
+      onLogin(await api("/auth/me"));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <SafeAreaView
+      style={[s.screen, { backgroundColor: colors.navy }]}
+      edges={["top"]}
+    >
+      <KeyboardAvoidingView
+        style={s.flex}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          <View style={[s.header, { paddingVertical: 38 }]}>
+            <Text style={s.eyebrow}>SEU ESCRITÓRIO, MAIS PERTO</Text>
+            <Text style={[s.brand, { fontSize: 34 }]}>
+              Martins{"\n"}Advogados
+            </Text>
+            <Text style={{ color: "#C8D5D7", lineHeight: 23, marginTop: 12 }}>
+              Clareza em cada etapa.{"\n"}Confiança em cada conversa.
+            </Text>
+          </View>
+          <View
+            style={[
+              s.content,
+              {
+                backgroundColor: colors.paper,
+                borderTopLeftRadius: 30,
+                borderTopRightRadius: 30,
+                flex: 1,
+              },
+            ]}
+          >
+            <Title>
+              {mode === "login"
+                ? "Bem-vindo de volta"
+                : mode === "register"
+                  ? "Cadastro do advogado"
+                  : "Ative seu acesso"}
+            </Title>
+            <Muted>
+              {mode === "activate"
+                ? "Cole o convite do seu advogado e crie sua senha."
+                : "Acompanhe processos e mantenha tudo ao seu alcance."}
+            </Muted>
+            <Fields fields={fields} values={values} setValues={setValues} />
+            {!!error && (
+              <Text accessibilityRole="alert" style={s.error}>
+                {error}
+              </Text>
+            )}
+            <Button
+              disabled={busy}
+              label={
+                busy
+                  ? "Aguarde…"
+                  : mode === "login"
+                    ? "Entrar"
+                    : mode === "register"
+                      ? "Criar conta"
+                      : "Ativar conta"
+              }
+              onPress={submit}
+            />
+            {(["login", "activate", "register"] as const)
+              .filter((m) => m !== mode)
+              .map((m) => (
+                <Button
+                  key={m}
+                  secondary
+                  disabled={busy}
+                  label={
+                    m === "login"
+                      ? "Já tenho conta"
+                      : m === "activate"
+                        ? "Sou cliente · tenho um convite"
+                        : "Cadastrar advogado"
+                  }
+                  onPress={() => {
+                    setMode(m);
+                    setError("");
+                    setValues({ token: invitation });
+                  }}
+                />
+              ))}
+            <Muted>
+              Seu acesso é pessoal. O cliente é cadastrado pelo advogado antes
+              de ativar a conta.
+            </Muted>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
 }
-function Portal({user,logout,updateUser}:{user:Row;logout:()=>void;updateUser:(u:Row)=>void}){
- const isLawyer=user.type==='adv';const [page,setPage]=useState('overview'),[mobile,setMobile]=useState(false),[processes,setProcesses]=useState<Row[]>([]),[hearings,setHearings]=useState<Row[]>([]),[clients,setClients]=useState<Row[]>([]),[notifications,setNotifications]=useState<Row[]>([]),[detail,setDetail]=useState<Row|null>(null),[messages,setMessages]=useState<Row[]>([]),[selected,setSelected]=useState<number|null>(null),[query,setQuery]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[modal,setModal]=useState<{kind:string;row?:Row}|null>(null),[activation,setActivation]=useState(''),[lookup,setLookup]=useState<Row|null>(null),[aliases,setAliases]=useState<string[]>([]),[filter,setFilter]=useState('Todos');
- const refresh=async()=>{const [p,h,n,c]=await Promise.all([api<Row[]>('/processes'),api<Row[]>('/hearings'),api<Row[]>('/notifications'),isLawyer?api<Row[]>('/clients'):Promise.resolve([])]);setProcesses(p);setHearings(h);setNotifications(n);setClients(c)};
- useEffect(()=>{refresh().catch(e=>setError(e.message)).finally(()=>setLoading(false));api<string[]>('/tribunals').then(setAliases).catch(()=>{});},[]);
- useEffect(()=>{if(!notice)return;const t=setTimeout(()=>setNotice(''),6000);return()=>clearTimeout(t)},[notice]);
- useEffect(()=>{if(page!=='messages'||!selected)return;setMessages([]);let active=true;const read=()=>api<Row[]>(`/processes/${selected}/messages`).then(m=>{if(active)setMessages(prev=>{const ids=new Set(m.map(v=>v.id));return [...prev.filter(v=>!ids.has(v.id)),...m]})}).catch(e=>{if(active)setError(e.message)});read();const timer=setInterval(()=>{if(!document.hidden)read()},10000);return()=>{active=false;clearInterval(timer)}},[page,selected]);
- async function run(fn:()=>Promise<void>){setBusy(true);setError('');try{await fn()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
- function go(next:string){setPage(next);setDetail(null);setQuery('');setMobile(false);setError('')}
- async function openProcess(p:Row){await run(async()=>{setDetail(await api(`/processes/${p.id}`));setPage('processes')})}
- const unread=notifications.filter(n=>!n.read).length;
- const upcoming=hearings.filter(h=>new Date(`${h.date?.slice(0,10)}T${h.hour||'00:00:00'}-03:00`).getTime()>=Date.now());
- const filtered=processes.filter(p=>(filter==='Todos'||p.status===filter)&&`${p.title} ${p.process_num} ${cnj(p.process_num)} ${p.client_name}`.toLowerCase().includes(query.toLowerCase()));
- const openModal=(kind:string,row?:Row)=>{setError('');setModal({kind,row});setLookup(null)};
- async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();const form=new FormData(e.currentTarget),d=Object.fromEntries(form),m=modal!;await run(async()=>{
-  if(m.kind==='client'){const r=await api('/clients','POST',{...d,cpf:String(d.cpf).replace(/\D/g,'')});setActivation(location.origin+r.activationPath)}
-  if(m.kind==='editClient')await api(`/clients/${m.row!.id}`,'PATCH',d);
-  if(m.kind==='process')await api('/processes','POST',{...d,id_costumer:Number(d.id_costumer),tribunal:d.tribunal||undefined});
-  if(m.kind==='editProcess')await api(`/processes/${detail!.id}`,'PATCH',d);
-  if(m.kind==='hearing'||m.kind==='editHearing')await api(m.row?`/hearings/${m.row.id}`:`/processes/${detail!.id}/hearings`,m.row?'PATCH':'POST',d);
-  if(m.kind==='movement'||m.kind==='editMovement')await api(m.row?`/movements/${m.row.id}`:`/processes/${detail!.id}/movements`,m.row?'PATCH':'POST',{...d,date:new Date(`${d.date}T12:00:00-03:00`).toISOString()});
-  if(m.kind==='document')await api(`/processes/${detail!.id}/documents`,'POST',form);
-  if(m.kind==='password')await api('/account/password','POST',d);
-  await refresh();if(detail)setDetail(await api(`/processes/${detail.id}`));setModal(null);setNotice('Informações salvas com sucesso.');
- })}
- async function remove(path:string){if(!confirm('Deseja excluir este registro? Esta ação não pode ser desfeita.'))return;await run(async()=>{await api(path,'DELETE');await refresh();if(detail)setDetail(await api(`/processes/${detail.id}`));setNotice('Registro excluído.')})}
- const processTable=()=>!filtered.length?<Empty title="Nenhum processo por aqui" description={isLawyer?'Cadastre um cliente e vincule o primeiro número de processo.':'Os processos vinculados pelo seu advogado aparecerão aqui.'}/>:<div className="table-wrap"><table><thead><tr><th>PROCESSO</th><th>{isLawyer?'CLIENTE':'ADVOGADO'}</th><th>SITUAÇÃO</th><th>ATUALIZAÇÃO</th><th/></tr></thead><tbody>{filtered.map(p=><tr key={p.id} onClick={()=>openProcess(p)}><td><button className="text-link" onClick={e=>{e.stopPropagation();openProcess(p)}}>{p.title}</button><small className="mono">{cnj(p.process_num)}</small></td><td>{isLawyer?p.client_name:p.lawyer_name}</td><td><Status value={p.status}/></td><td>{date(p.last_update)}</td><td><ChevronRight size={17}/></td></tr>)}</tbody></table></div>;
- const hearingCard=(h:Row)=><div className="hearing" key={h.id}><div className="date-tile"><strong>{String(h.date).slice(8,10)}</strong><span>{new Date(`${String(h.date).slice(0,10)}T12:00:00`).toLocaleDateString('pt-BR',{month:'short'}).replace('.','').toUpperCase()}</span></div><div><h3>{h.type}</h3><p>{h.process_title||detail?.title}</p><span className="subtle"><Clock3 size={13}/> {String(h.hour).slice(0,5)} · Brasília · {h.place||'Local a confirmar'} {h.room&&`· ${h.room}`}</span>{h.guidelines&&<p>{h.guidelines}</p>}{/^https:\/\//i.test(h.meeting_link||'')&&<a href={h.meeting_link} target="_blank" rel="noreferrer" className="text-link">Acessar sala virtual ↗</a>}</div>{isLawyer&&<div className="row-actions"><button className="icon" aria-label="Editar audiência" onClick={()=>openModal('editHearing',h)}><Pencil size={16}/></button><button className="icon" aria-label="Cancelar audiência" onClick={()=>remove(`/hearings/${h.id}`)}><Trash2 size={16}/></button></div>}</div>;
- return <div className="shell"><aside className={mobile?'sidebar open':'sidebar'}><div className="brand"><Scale/><span>nexo<span className="brand-light"> jurídico</span></span></div><div className="workspace-label">{isLawyer?'ESPAÇO DO ADVOGADO':'PORTAL DO CLIENTE'}</div><nav>{nav.filter(n=>isLawyer||n.id!=='clients').map(n=><button key={n.id} className={page===n.id?'active':''} onClick={()=>go(n.id)}><n.icon size={19}/>{n.label}{n.id==='notifications'&&unread>0&&<b>{unread}</b>}</button>)}</nav><div className="sidebar-bottom"><div className="privacy-card"><ShieldCheck size={22}/><strong>Seu espaço de confiança</strong><p>Processos e conversas acessíveis somente aos envolvidos.</p></div><button className="account-button" onClick={()=>go('account')}><span className="avatar">{user.name?.slice(0,1)}</span><span><strong>{user.name}</strong><small>{isLawyer?'Advogado':'Cliente'}</small></span><Settings size={17}/></button><button className="logout" onClick={()=>run(async()=>{await api('/auth/logout','POST');logout()})}><LogOut size={16}/> Sair da conta</button></div></aside>{mobile&&<div className="overlay" onClick={()=>setMobile(false)}/>}
- <main><header className="topbar"><button className="icon mobile-menu" aria-label="Abrir menu" onClick={()=>setMobile(true)}><Menu/></button><span>Seu escritório, mais próximo.</span><div><span className="today">{new Date().toLocaleDateString('pt-BR',{day:'numeric',month:'long',year:'numeric'})}</span><button className="icon notification-button" onClick={()=>go('notifications')} aria-label={`${unread} notificações não lidas`}><Bell size={20}/>{unread>0&&<i/>}</button><span className="avatar small">{user.name?.slice(0,1)}</span></div></header><div className="content">
- {error&&<div className="alert error" role="alert">{error}<button className="text-link" onClick={()=>run(refresh)}>Tentar novamente</button></div>}{notice&&<div className="alert success" role="status"><Check size={17}/>{notice}</div>}
- {loading?<div className="loading"><RefreshCw/><p>Carregando suas informações…</p></div>:<>
- {page==='overview'&&<><div className="page-heading"><div><span className="eyebrow">VISÃO GERAL</span><h1>Olá, {user.name.split(' ')[0]}<span className="green-dot">.</span></h1><p>{isLawyer?'Um novo dia para cuidar de quem confia em você.':'Acompanhe seu processo com mais tranquilidade.'}</p></div>{isLawyer&&<Button onClick={()=>{go('processes');openModal('process')}}><Plus size={18}/> Novo processo</Button>}</div><div className="welcome-banner"><div><span className="eyebrow">TUDO NO SEU TEMPO. TUDO NO SEU LUGAR.</span><h2>{isLawyer?'Menos distância. Mais acompanhamento.':'Você faz parte de cada etapa.'}</h2><p>{isLawyer?'Conecte cada cliente às informações que ele precisa.':'Consulte atualizações, prepare-se para audiências e fale com seu advogado.'}</p><button onClick={()=>go(isLawyer?'clients':'processes')}>{isLawyer?'Gerenciar meus clientes':'Ver meus processos'} <ArrowUpRight size={17}/></button></div><div className="banner-art"><Scale size={100} strokeWidth={.8}/></div></div><div className="stats"><div><span><FolderOpen/> Processos ativos</span><strong>{processes.filter(p=>p.status!=='Arquivado'&&p.status!=='Concluído').length.toString().padStart(2,'0')}</strong><small>Acompanhamento em um só lugar</small></div><div><span><CalendarDays/> Próximas audiências</span><strong>{upcoming.length.toString().padStart(2,'0')}</strong><small>Confira os detalhes e orientações</small></div><div><span>{isLawyer?<Users/>:<Bell/>}{isLawyer?'Clientes cadastrados':'Notificações não lidas'}</span><strong>{(isLawyer?clients.length:unread).toString().padStart(2,'0')}</strong><small>{isLawyer?'Relacionamentos que importam':'Fique por dentro das novidades'}</small></div></div><div className="dashboard-grid"><section className="panel"><div className="panel-title"><h2>Seus processos</h2><button className="text-link" onClick={()=>go('processes')}>Ver todos <ArrowUpRight size={16}/></button></div>{processes.length?processTable():<Empty title="Vamos começar?" description={isLawyer?'Seu primeiro cliente é o próximo passo.':'Seu advogado ainda não vinculou um processo.'}/>}</section><section className="panel"><div className="panel-title"><h2>Na sua agenda</h2><CalendarDays size={19}/></div>{upcoming.length?upcoming.slice(0,3).map(hearingCard):<Empty title="Agenda livre" description="Nenhuma audiência futura cadastrada."/>}<button className="panel-footer" onClick={()=>go('hearings')}>Abrir agenda <ArrowUpRight size={15}/></button></section></div><div className="source-note"><ShieldCheck size={17}/><span>As movimentações públicas têm como fonte o CNJ / DataJud. Datas e informações podem ter defasagem. Confirme prazos e audiências com seu advogado.</span></div></>}
- {page==='processes'&&!detail&&<><div className="page-heading"><div><span className="eyebrow">ACOMPANHAMENTO</span><h1>Seus processos</h1><p>Uma visão clara de cada etapa.</p></div>{isLawyer&&<Button onClick={()=>openModal('process')}><Plus size={18}/> Novo processo</Button>}</div><section className="panel"><div className="toolbar"><div className="search"><Search size={18}/><input aria-label="Pesquisar processos" placeholder="Busque por título, número ou cliente" value={query} onChange={e=>setQuery(e.target.value)}/></div><select aria-label="Filtrar situação" value={filter} onChange={e=>setFilter(e.target.value)}>{['Todos','Em andamento','Aguardando','Concluído','Arquivado'].map(v=><option key={v}>{v}</option>)}</select></div>{processTable()}</section></>}
- {page==='processes'&&detail&&<><button className="back" onClick={()=>setDetail(null)}><ArrowLeft size={16}/> Voltar aos processos</button><div className="page-heading"><div><span className="eyebrow">DETALHES DO PROCESSO</span><h1>{detail.title}</h1><p className="mono">{cnj(detail.process_num)}</p></div>{isLawyer&&<div className="actions"><Button secondary onClick={()=>openModal('editProcess',detail)}><Pencil size={16}/> Editar</Button><Button disabled={busy} onClick={()=>run(async()=>{const r=await api(`/processes/${detail.id}/sync`,'POST');setDetail(await api(`/processes/${detail.id}`));await refresh();setNotice(`${r.inserted} nova(s) movimentação(ões). Consulta concluída.`)})}><RefreshCw size={16}/> Consultar DataJud</Button></div>}</div><div className="case-summary"><Status value={detail.status}/><span>{detail.court||'Órgão não informado'}</span><span>{detail.area||'Área não informada'}</span></div>{detail.observations&&<div className="panel note"><h3>Orientações do advogado</h3><p className="prewrap">{detail.observations}</p></div>}<div className="source-note"><Clock3 size={17}/><span>Última consulta ao DataJud: {detail.datajud_checked_at?date(detail.datajud_checked_at):'ainda não realizada'}. Última atualização na fonte: {date(detail.datajud_updated_at)}. A consulta pública não inclui autos completos nem garante dados em tempo real.</span></div><div className="detail-grid"><section className="panel"><div className="panel-title"><h2>Linha do tempo</h2>{isLawyer&&<button className="text-link" onClick={()=>openModal('movement')}><Plus size={16}/> Atualização</button>}</div>{detail.movements.length?<div className="timeline">{detail.movements.map((m:Row)=><article key={m.id}><div className="timeline-dot"/><span className="eyebrow">{date(m.date)} · {m.source==='datajud'?'CNJ / DATAJUD':'ADVOGADO'}</span><h3>{m.title}</h3><p className="prewrap">{m.description}</p>{isLawyer&&m.source!=='datajud'&&<div className="actions"><button className="text-link" onClick={()=>openModal('editMovement',m)}>Editar</button><button className="text-link danger" onClick={()=>remove(`/movements/${m.id}`)}>Excluir</button></div>}</article>)}</div>:<Empty title="A história começa aqui" description="Nenhuma movimentação registrada neste processo."/>}</section><div><section className="panel"><div className="panel-title"><h2>Audiências</h2>{isLawyer&&<button className="icon" aria-label="Agendar audiência" onClick={()=>openModal('hearing')}><Plus size={18}/></button>}</div>{detail.hearings.length?detail.hearings.map(hearingCard):<Empty title="Nenhuma audiência" description="Os agendamentos do advogado aparecerão aqui."/>}</section><section className="panel"><div className="panel-title"><h2>Documentos</h2>{isLawyer&&<button className="icon" aria-label="Enviar documento" onClick={()=>openModal('document')}><Plus size={18}/></button>}</div>{detail.documents.length?detail.documents.map((d:Row)=><div className="document" key={d.id}><FileText size={20}/><span>{d.name}<small>{date(d.date_sed)}</small></span><a className="icon" aria-label={`Baixar ${d.name}`} href={`/api/documents/${d.id}/download`}><Download size={16}/></a>{isLawyer&&<button className="icon" aria-label={`Excluir ${d.name}`} onClick={()=>remove(`/documents/${d.id}`)}><Trash2 size={16}/></button>}</div>):<Empty title="Nenhum documento" description="Arquivos compartilhados ficam disponíveis aqui."/>}</section><Button secondary onClick={()=>{setSelected(detail.id);go('messages')}}><MessageSquare size={17}/> Abrir conversa do processo</Button></div></div></>}
- {page==='clients'&&isLawyer&&<><div className="page-heading"><div><span className="eyebrow">RELACIONAMENTOS</span><h1>Seus clientes</h1><p>Cadastre, compartilhe o acesso e acompanhe de perto.</p></div><Button onClick={()=>openModal('client')}><Plus size={18}/> Cadastrar cliente</Button></div><div className="search standalone"><Search size={18}/><input aria-label="Pesquisar clientes" placeholder="Busque por nome ou e-mail" value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="client-grid">{clients.filter(c=>`${c.name} ${c.email}`.toLowerCase().includes(query.toLowerCase())).map(c=><section className="panel client-card" key={c.id}><span className="avatar">{c.name.slice(0,1)}</span><h2>{c.name}</h2><p>{c.email}</p><p>{c.phone||'Telefone não informado'}</p><small>{processes.filter(p=>p.id_costumer===c.id).length} processo(s) vinculado(s)</small><div className="actions"><Button secondary onClick={()=>openModal('editClient',c)}><Pencil size={14}/> Editar</Button>{!c.activated&&<Button secondary disabled={busy} onClick={()=>run(async()=>{const r=await api(`/clients/${c.id}/invite`,'POST');setActivation(location.origin+r.activationPath)})}>Gerar acesso</Button>}</div></section>)}</div>{!clients.length&&<Empty title="Cada cliente tem uma história" description="Cadastre o primeiro cliente para começar a acompanhá-la."/>}</>}
- {page==='hearings'&&<><div className="page-heading"><div><span className="eyebrow">AGENDA</span><h1>Audiências</h1><p>Datas, locais e orientações. Horários de Brasília.</p></div></div><section className="panel">{hearings.length?hearings.map(hearingCard):<Empty title="Sua agenda está livre" description={isLawyer?'Abra um processo para cadastrar uma audiência.':'Seu advogado ainda não cadastrou audiências.'}/>}</section></>}
- {page==='messages'&&<><div className="page-heading"><div><span className="eyebrow">CONVERSAS</span><h1>Um canal mais próximo</h1><p>Mensagens organizadas por processo. Atualização a cada 10 segundos.</p></div></div><div className="chat panel"><aside>{processes.map(p=><button className={selected===p.id?'selected':''} key={p.id} onClick={()=>{setSelected(p.id);setMessages([])}}><MessageSquare size={19}/><span><strong>{p.title}</strong><small>{isLawyer?p.client_name:p.lawyer_name}</small></span><ChevronRight size={15}/></button>)}</aside><section>{selected?<><div className="chat-title">{processes.find(p=>p.id===selected)?.title}</div><div className="chat-messages" aria-live="polite">{messages.length===100&&<button className="text-link" onClick={()=>run(async()=>{const older=await api<Row[]>(`/processes/${selected}/messages?before=${messages[0].id}`);setMessages([...older,...messages])})}>Carregar mensagens anteriores</button>}{messages.length?messages.map(m=><div key={m.id} className={`bubble ${m.id_sender===user.id?'mine':''}`}><strong>{m.sender_name}</strong><p>{m.body}</p><small>{new Date(m.created_at).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'})}</small></div>):<Empty title="Comece a conversa" description="Use este espaço para dúvidas e orientações sobre o processo."/>}</div><form className="chat-compose" onSubmit={async e=>{e.preventDefault();const f=e.currentTarget;const body=String(new FormData(f).get('body')||'');await run(async()=>{await api(`/processes/${selected}/messages`,'POST',{body});f.reset();setMessages(await api(`/processes/${selected}/messages`))})}}><textarea aria-label="Mensagem" name="body" placeholder="Escreva sua mensagem…" required maxLength={5000}/><Button type="submit" disabled={busy}><Send size={18}/> Enviar</Button></form></>:<Empty title="Vamos conversar?" description="Selecione um processo para abrir a conversa."/>}</section></div></>}
- {page==='notifications'&&<><div className="page-heading"><div><span className="eyebrow">NOVIDADES</span><h1>Notificações</h1><p>{unread} atualização(ões) aguardando sua leitura.</p></div></div><section className="panel">{notifications.length?notifications.map(n=><div className={`notification ${n.read?'read':''}`} key={n.id}><Bell size={20}/><div><h3>{n.title}</h3><p>{n.description}</p><small>{date(n.created_at)}</small></div>{!n.read&&<button className="icon" aria-label="Marcar como lida" onClick={()=>run(async()=>{await api(`/notifications/${n.id}/read`,'PATCH',{});await refresh()})}><Check size={18}/></button>}<button className="icon" aria-label="Excluir notificação" onClick={()=>remove(`/notifications/${n.id}`)}><Trash2 size={16}/></button></div>):<Empty title="Tudo em dia" description="As novidades dos seus processos aparecerão aqui."/>}</section></>}
- {page==='account'&&<><div className="page-heading"><div><span className="eyebrow">PREFERÊNCIAS</span><h1>Minha conta</h1><p>Seus dados e a segurança do seu acesso.</p></div></div><section className="panel account-form"><form onSubmit={e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.currentTarget));run(async()=>{const u=await api('/account','PATCH',d);updateUser({...user,...u});setNotice('Dados atualizados.')})}}><Field label="Nome" name="name" value={user.name} required/><Field label="Telefone" name="phone" value={user.phone}/><p>{user.email}</p><Button type="submit" disabled={busy}>Salvar alterações</Button></form><Button secondary onClick={()=>openModal('password')}>Alterar senha</Button></section></>}
- </>}
- <footer className="page-footer"><span>nexo jurídico</span><span>Clareza em cada etapa.</span></footer></div></main>
- {modal&&<Modal title={({client:'Cadastrar cliente',editClient:'Editar cliente',process:'Vincular processo',editProcess:'Editar processo',hearing:'Agendar audiência',editHearing:'Editar audiência',movement:'Nova atualização',editMovement:'Editar atualização',document:'Compartilhar documento',password:'Alterar senha'} as Row)[modal.kind]} close={()=>{if(!busy)setModal(null)}}>
- {error&&<p className="error" role="alert">{error}</p>}
- {modal.kind==='process'&&<div className="lookup-box"><strong>Comece pelo número do processo</strong><p>Consulte os dados públicos antes de vincular. Se não estiver disponível, você pode cadastrar manualmente.</p><form className="form-grid" onSubmit={e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.currentTarget));run(async()=>{setLookup(await api('/processes/search','POST',{number:d.number,tribunal:d.tribunal||undefined}))})}}><Field label="Número CNJ" name="number" required/><Field label="Tribunal" name="tribunal" options={[{value:'',label:'Identificar pelo número'},...aliases.map(a=>({value:a,label:a.toUpperCase()}))]}/><Button type="submit" disabled={busy}><Search size={16}/> Consultar</Button></form>{lookup&&<div className="success lookup-result"><Check size={17}/><span>{lookup.className} · {lookup.court}<small>{lookup.movements.length} movimentações encontradas · CNJ / DataJud</small></span></div>}</div>}
- <form onSubmit={submit} className="form-grid" key={`${modal.kind}-${lookup?.number||''}`}>
- {modal.kind==='client'&&<><Field label="Nome completo" name="name" required wide/><Field label="E-mail de acesso" name="email" type="email" required/><Field label="Telefone" name="phone" type="tel"/><Field label="CPF (somente números)" name="cpf" required/><Field label="Data de nascimento" name="date" type="date" required/><Field label="Endereço" name="address" wide/><p className="help wide">Após salvar, compartilhe o link de ativação com o cliente. Ele define a própria senha. O link expira em 7 dias.</p></>}
- {modal.kind==='editClient'&&<><Field label="Nome" name="name" value={modal.row?.name} required/><Field label="Telefone" name="phone" value={modal.row?.phone}/><Field label="Endereço" name="address" value={modal.row?.address} wide/></>}
- {modal.kind==='process'&&<><Field label="Número CNJ" name="process_num" value={lookup?.number} required wide/><Field label="Título para o cliente" name="title" value={lookup?.className} required wide/><Field label="Cliente" name="id_costumer" required options={[{value:'',label:'Selecione um cliente'},...clients.map(c=>({value:String(c.id),label:c.name}))]}/><Field label="Tribunal" name="tribunal" value={lookup?.tribunal} options={[{value:'',label:'Identificar pelo número'},...aliases.map(a=>({value:a,label:a.toUpperCase()}))]}/><Field label="Órgão julgador" name="court" value={lookup?.court}/><Field label="Área" name="area"/><Field label="Orientações ao cliente" name="observations" type="textarea" wide/>{!clients.length&&<p className="error wide">Cadastre um cliente antes de vincular o processo.</p>}<p className="help wide">Após salvar, use “Consultar DataJud” no processo para importar as movimentações.</p></>}
- {modal.kind==='editProcess'&&<><Field label="Título" name="title" value={modal.row?.title} required wide/><Field label="Situação" name="status" value={modal.row?.status} options={['Em andamento','Aguardando','Concluído','Arquivado'].map(s=>({value:s,label:s}))}/><Field label="Área" name="area" value={modal.row?.area}/><Field label="Órgão" name="court" value={modal.row?.court} wide/><Field label="Orientações ao cliente" name="observations" type="textarea" value={modal.row?.observations} wide/></>}
- {['hearing','editHearing'].includes(modal.kind)&&<><Field label="Tipo de audiência" name="type" value={modal.row?.type} required wide/><Field label="Data" name="date" type="date" value={modal.row?.date?.slice(0,10)} required/><Field label="Horário de Brasília" name="hour" type="time" value={modal.row?.hour?.slice(0,5)} required/><Field label="Local" name="place" value={modal.row?.place}/><Field label="Sala" name="room" value={modal.row?.room}/><Field label="Link da sala virtual (HTTPS)" name="meeting_link" value={modal.row?.meeting_link} wide/><Field label="Orientações" name="guidelines" type="textarea" value={modal.row?.guidelines} wide/></>}
- {['movement','editMovement'].includes(modal.kind)&&<><Field label="Título" name="title" value={modal.row?.title} required wide/><Field label="Data" name="date" type="date" value={modal.row?.date?.slice(0,10)||new Date().toISOString().slice(0,10)} required/><Field label="Descrição para o cliente" name="description" type="textarea" value={modal.row?.description} required wide/></>}
- {modal.kind==='document'&&<><Field label="Nome do documento (com extensão)" name="name" required wide/><label className="field wide"><span>PDF, PNG ou JPEG · até 5 MB</span><input type="file" name="file" accept="application/pdf,image/png,image/jpeg" required/></label></>}
- {modal.kind==='password'&&<><Field label="Senha atual" name="currentPassword" type="password" required wide/><Field label="Nova senha (mínimo 10 caracteres)" name="password" type="password" required wide/></>}
- <div className="modal-actions wide"><Button secondary onClick={()=>setModal(null)} disabled={busy}>Cancelar</Button><Button type="submit" disabled={busy||(modal.kind==='process'&&!clients.length)}>{busy?'Salvando…':'Salvar'}</Button></div></form></Modal>}
- {activation&&<Modal title="Acesso do cliente pronto" close={()=>setActivation('')}><p>Compartilhe este link diretamente com o cliente. Ele é pessoal, pode ser usado uma vez e expira em 7 dias.</p><label className="field"><span>Link de ativação</span><input readOnly value={activation} onFocus={e=>e.target.select()}/></label><Button onClick={()=>run(async()=>{await navigator.clipboard.writeText(activation);setNotice('Link copiado.')})}><Copy size={16}/> Copiar link</Button><p className="help">Nenhum e-mail foi enviado automaticamente.</p></Modal>}
- </div>
+type FormState = {
+  title: string;
+  fields: FieldSpec[];
+  initial?: Record<string, string>;
+  save: (v: Record<string, string>) => Promise<void>;
+};
+type Page =
+  | "home"
+  | "processes"
+  | "hearings"
+  | "messages"
+  | "more"
+  | "clients"
+  | "notifications"
+  | "account";
+const tabs: { id: Page; label: string; mark: string }[] = [
+  { id: "home", label: "Início", mark: "⌂" },
+  { id: "processes", label: "Processos", mark: "▤" },
+  { id: "hearings", label: "Agenda", mark: "◷" },
+  { id: "messages", label: "Conversas", mark: "✉" },
+  { id: "more", label: "Mais", mark: "•••" },
+];
+function Portal({
+  user,
+  updateUser,
+  onLogout,
+}: {
+  user: Row;
+  updateUser: (u: Row) => void;
+  onLogout: () => void;
+}) {
+  const lawyer = user.type === "adv";
+  const [page, setPage] = useState<Page>("home"),
+    [processes, setProcesses] = useState<Row[]>([]),
+    [hearings, setHearings] = useState<Row[]>([]),
+    [clients, setClients] = useState<Row[]>([]),
+    [notifications, setNotifications] = useState<Row[]>([]),
+    [detail, setDetail] = useState<Row | null>(null),
+    [loading, setLoading] = useState(true),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [query, setQuery] = useState(""),
+    [form, setForm] = useState<FormState | null>(null),
+    [tribunals, setTribunals] = useState<string[]>([]),
+    [selected, setSelected] = useState<Row | null>(null),
+    [messages, setMessages] = useState<Row[]>([]),
+    [message, setMessage] = useState(""),
+    [chatLoading, setChatLoading] = useState(false);
+  const chatScroll = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const activeChat = useRef<number | null>(null);
+  const refresh = useCallback(async () => {
+    const [p, h, n, c] = await Promise.all([
+      api<Row[]>("/processes"),
+      api<Row[]>("/hearings"),
+      api<Row[]>("/notifications"),
+      lawyer ? api<Row[]>("/clients") : Promise.resolve([]),
+    ]);
+    setProcesses(p);
+    setHearings(h);
+    setNotifications(n);
+    setClients(c);
+  }, [lawyer]);
+  const refreshDetail = async (id: number) => {
+    setDetail(await api(`/processes/${id}`));
+    await refresh();
+  };
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    refresh()
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+    api<string[]>("/tribunals")
+      .then(setTribunals)
+      .catch(() => {});
+  }, [refresh]);
+  const go = (next: Page) => {
+    setPage(next);
+    setDetail(null);
+    setSelected(null);
+    setMessages([]);
+    setQuery("");
+    setError("");
+  };
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (form) {
+        setForm(null);
+        return true;
+      }
+      if (detail) {
+        setDetail(null);
+        return true;
+      }
+      if (selected) {
+        setSelected(null);
+        return true;
+      }
+      if (page !== "home") {
+        go("home");
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [form, detail, selected, page]);
+  useEffect(() => {
+    if (page !== "messages" || !selected) {
+      activeChat.current = null;
+      return;
+    }
+    activeChat.current = selected.id;
+    let live = true;
+    setMessages([]);
+    setChatLoading(true);
+    const read = async () => {
+      try {
+        const rows = await api<Row[]>(`/processes/${selected.id}/messages`);
+        if (live)
+          setMessages((prev) => {
+            const ids = new Set(rows.map((m) => m.id));
+            return [...prev.filter((m) => !ids.has(m.id)), ...rows];
+          });
+      } catch (e) {
+        if (live) setError((e as Error).message);
+      } finally {
+        if (live) setChatLoading(false);
+      }
+    };
+    read();
+    const timer = setInterval(() => {
+      if (AppState.currentState === "active") read();
+    }, 10000);
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") read();
+    });
+    return () => {
+      live = false;
+      clearInterval(timer);
+      sub.remove();
+      activeChat.current = null;
+    };
+  }, [page, selected?.id]);
+  const openProcess = (p: Row) =>
+    run(async () => {
+      setDetail(await api(`/processes/${p.id}`));
+      setPage("processes");
+    });
+  const chat = (p: Row) => {
+    setSelected(p);
+    setPage("messages");
+    setDetail(null);
+    setMessage("");
+    setError("");
+  };
+  const confirmDelete = (title: string, path: string, id?: number) =>
+    Alert.alert(title, "Essa ação não pode ser desfeita.", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Excluir",
+        style: "destructive",
+        onPress: () =>
+          run(async () => {
+            await api(path, "DELETE");
+            if (id) await refreshDetail(id);
+            else await refresh();
+          }),
+      },
+    ]);
+  const shareInvite = async (result: Row) => {
+    const t = activationToken(result.activationPath);
+    await Share.share({
+      message: `Martins Advogados — ative sua conta no aplicativo.\nAbra: martinsadvogados://ativar?token=${t}\nOu toque em “Sou cliente · tenho um convite” e cole este código:\n${t}\nConvite pessoal, válido por 7 dias.`,
+    });
+  };
+  const clientForm = (row?: Row) => {
+    const fields = row
+      ? [nameField, phoneField, { name: "address", label: "Endereço" }]
+      : [
+          nameField,
+          emailField,
+          phoneField,
+          {
+            name: "cpf",
+            label: "CPF (11 dígitos)",
+            keyboard: "numeric" as const,
+            required: true,
+          },
+          { ...dateField, label: "Nascimento (AAAA-MM-DD)" },
+          { name: "address", label: "Endereço" },
+        ];
+    setForm({
+      title: row ? "Editar cliente" : "Cadastrar cliente",
+      fields,
+      initial: row ? initialStrings(row, fields) : {},
+      save: async (v) => {
+        const r = await api(
+          row ? `/clients/${row.id}` : "/clients",
+          row ? "PATCH" : "POST",
+          v,
+        );
+        await refresh();
+        if (!row) {
+          setForm(null);
+          await shareInvite(r);
+        }
+      },
+    });
+  };
+  const processForm = (found?: Row) => {
+    if (!clients.length) {
+      Alert.alert(
+        "Cadastre um cliente",
+        "O processo precisa estar vinculado a um cliente.",
+      );
+      go("clients");
+      return;
+    }
+    const fields: FieldSpec[] = [
+      { name: "process_num", label: "Número CNJ", required: true },
+      { name: "title", label: "Título para o cliente", required: true },
+      {
+        name: "id_costumer",
+        label: "Cliente",
+        required: true,
+        options: clients.map((c) => ({ value: String(c.id), label: c.name })),
+      },
+      {
+        name: "tribunal",
+        label: "Tribunal (ex.: tjrs, trf4)",
+        placeholder: "Identificado pelo número CNJ",
+      },
+      { name: "court", label: "Órgão julgador" },
+      { name: "area", label: "Área" },
+      {
+        name: "observations",
+        label: "Orientações ao cliente",
+        multiline: true,
+      },
+    ];
+    setForm({
+      title: "Vincular processo",
+      fields,
+      initial: found
+        ? {
+            process_num: found.number,
+            title: found.className,
+            tribunal: found.tribunal,
+            court: found.court,
+          }
+        : {},
+      save: async (v) => {
+        const data = {
+          ...v,
+          id_costumer: Number(v.id_costumer),
+          tribunal: v.tribunal?.trim().toLowerCase() || undefined,
+        };
+        await api("/processes", "POST", data);
+        await refresh();
+      },
+    });
+  };
+  const searchProcess = () =>
+    setForm({
+      title: "Consultar DataJud",
+      fields: [
+        { name: "number", label: "Número CNJ", required: true },
+        {
+          name: "tribunal",
+          label: "Tribunal (opcional)",
+          placeholder: "Ex.: tjrs; deixe vazio para identificar",
+        },
+      ],
+      save: async (v) => {
+        const alias = v.tribunal?.trim().toLowerCase();
+        if (alias && tribunals.length && !tribunals.includes(alias))
+          throw new Error("Tribunal inválido. Exemplo: tjrs, trf4 ou trt4.");
+        const result = await api("/processes/search", "POST", {
+          number: v.number,
+          tribunal: alias || undefined,
+        });
+        setForm(null);
+        Alert.alert(
+          result.className || "Processo encontrado",
+          `${result.court}\n${result.movements.length} movimentações públicas. Fonte: CNJ / DataJud.`,
+          [
+            { text: "Fechar" },
+            { text: "Vincular", onPress: () => processForm(result) },
+          ],
+        );
+      },
+    });
+  const editProcess = () => {
+    if (!detail) return;
+    const fields: FieldSpec[] = [
+      { name: "title", label: "Título", required: true },
+      {
+        name: "status",
+        label: "Situação",
+        required: true,
+        options: ["Em andamento", "Aguardando", "Concluído", "Arquivado"].map(
+          (v) => ({ value: v, label: v }),
+        ),
+      },
+      { name: "area", label: "Área" },
+      { name: "court", label: "Órgão julgador" },
+      {
+        name: "observations",
+        label: "Orientações ao cliente",
+        multiline: true,
+      },
+    ];
+    setForm({
+      title: "Editar processo",
+      fields,
+      initial: initialStrings(detail, fields),
+      save: async (v) => {
+        await api(`/processes/${detail.id}`, "PATCH", v);
+        await refreshDetail(detail.id);
+      },
+    });
+  };
+  const eventForm = (kind: "hearings" | "movements", row?: Row) => {
+    if (!detail) return;
+    const p = detail;
+    const fields = kind === "hearings" ? hearingFields : movementFields;
+    setForm({
+      title:
+        kind === "hearings"
+          ? row
+            ? "Editar audiência"
+            : "Agendar audiência"
+          : row
+            ? "Editar orientação"
+            : "Nova orientação",
+      fields,
+      initial: row ? initialStrings(row, fields) : {},
+      save: async (v) => {
+        await api(
+          row ? `/${kind}/${row.id}` : `/processes/${p.id}/${kind}`,
+          row ? "PATCH" : "POST",
+          v,
+        );
+        await refreshDetail(p.id);
+      },
+    });
+  };
+  const upload = () =>
+    run(async () => {
+      if (!detail) return;
+      const pick = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/png", "image/jpeg"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (pick.canceled) return;
+      const file = pick.assets[0];
+      try {
+        if (file.size && file.size > 5 * 1024 * 1024)
+          throw new Error("O arquivo deve ter até 5 MB.");
+        const data = new FormData();
+        data.append("name", file.name);
+        data.append("file", {
+          uri: file.uri,
+          name: file.name,
+          type: file.mimeType || "application/octet-stream",
+        } as any);
+        await api(`/processes/${detail.id}/documents`, "POST", data);
+        await refreshDetail(detail.id);
+      } finally {
+        await FileSystem.deleteAsync(file.uri, { idempotent: true });
+      }
+    });
+  const filtered = processes.filter((p) =>
+    `${p.title} ${p.process_num} ${cnj(p.process_num)} ${p.client_name}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
+  );
+  const upcoming = hearings.filter(
+    (h) =>
+      new Date(
+        `${h.date?.slice(0, 10)}T${h.hour || "00:00:00"}-03:00`,
+      ).getTime() >= Date.now(),
+  );
+  const unread = notifications.filter((n) => !n.read).length;
+  const processCards = (rows: Row[], forChat = false) =>
+    rows.length ? (
+      rows.map((p) => (
+        <Pressable
+          accessibilityRole="button"
+          key={p.id}
+          onPress={() => (forChat ? chat(p) : openProcess(p))}
+        >
+          <Card>
+            <View style={s.badge}>
+              <Text style={s.badgeText}>{p.status}</Text>
+            </View>
+            <Text style={s.subtitle}>{p.title}</Text>
+            <Muted>{cnj(p.process_num)}</Muted>
+            <Text style={s.body}>{lawyer ? p.client_name : p.lawyer_name}</Text>
+            <Text style={s.link}>
+              {forChat ? "Abrir conversa →" : "Acompanhar processo →"}
+            </Text>
+          </Card>
+        </Pressable>
+      ))
+    ) : (
+      <Empty text="Nenhum processo encontrado." />
+    );
+  const hearingCard = (h: Row, editable = false) => (
+    <Card key={h.id}>
+      <Text style={s.eyebrow}>AUDIÊNCIA</Text>
+      <Text style={s.subtitle}>{h.type}</Text>
+      <Text style={s.body}>
+        {formatDate(h.date)} · {h.hour?.slice(0, 5)} (Brasília)
+      </Text>
+      <Muted>{h.process_title || detail?.title}</Muted>
+      <Text style={s.body}>
+        {[h.place, h.room && `Sala ${h.room}`].filter(Boolean).join(" · ") ||
+          "Local a confirmar"}
+      </Text>
+      {!!h.guidelines && <Muted>{h.guidelines}</Muted>}
+      {!!h.meeting_link && (
+        <Button
+          secondary
+          label="Abrir sala virtual"
+          onPress={() =>
+            run(async () => {
+              if (!/^https:\/\//i.test(h.meeting_link))
+                throw new Error("Link inválido.");
+              await Linking.openURL(h.meeting_link);
+            })
+          }
+        />
+      )}{" "}
+      {editable && lawyer && (
+        <>
+          <Button
+            secondary
+            label="Editar audiência"
+            onPress={() => eventForm("hearings", h)}
+          />
+          <Button
+            secondary
+            label="Cancelar audiência"
+            onPress={() =>
+              confirmDelete(
+                "Cancelar audiência?",
+                `/hearings/${h.id}`,
+                detail?.id,
+              )
+            }
+          />
+        </>
+      )}
+    </Card>
+  );
+  return (
+    <SafeAreaView
+      style={[s.screen, { backgroundColor: colors.navy }]}
+      edges={["top", "bottom"]}
+    >
+      <View style={s.header}>
+        <View style={s.between}>
+          <View>
+            <Text style={s.eyebrow}>SEU PORTAL JURÍDICO</Text>
+            <Text style={s.brand}>Martins Advogados</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Notificações, ${unread} não lidas`}
+            onPress={() => go("notifications")}
+            style={{ padding: 12 }}
+          >
+            <Text style={{ color: colors.white, fontWeight: "700" }}>
+              ● {unread}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+      <KeyboardAvoidingView
+        style={[s.flex, { backgroundColor: colors.paper }]}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        {page === "messages" && selected ? (
+          <>
+            <View style={{ padding: 16, gap: 8 }}>
+              <Button
+                secondary
+                label="← Todas as conversas"
+                onPress={() => setSelected(null)}
+              />
+              <Text style={s.subtitle}>{selected.title}</Text>
+            </View>
+            <ScrollView
+              ref={chatScroll}
+              contentContainerStyle={{ padding: 18 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {!!error && <Text style={s.error}>{error}</Text>}
+              {chatLoading ? (
+                <Loading />
+              ) : !messages.length ? (
+                <Empty text="Comece uma conversa com uma mensagem." />
+              ) : (
+                <Button
+                  secondary
+                  label="Carregar mensagens anteriores"
+                  disabled={busy}
+                  onPress={() =>
+                    run(async () => {
+                      const id = selected.id;
+                      const older = await api<Row[]>(
+                        `/processes/${id}/messages?before=${messages[0].id}`,
+                      );
+                      if (activeChat.current !== id) return;
+                      if (!older.length) {
+                        Alert.alert("Conversas", "Você chegou ao início.");
+                        return;
+                      }
+                      setMessages((prev) => {
+                        const ids = new Set(prev.map((m) => m.id));
+                        return [
+                          ...older.filter((m) => !ids.has(m.id)),
+                          ...prev,
+                        ];
+                      });
+                    })
+                  }
+                />
+              )}{" "}
+              {messages.map((m) => (
+                <View
+                  key={m.id}
+                  style={[s.bubble, m.id_sender === user.id && s.mine]}
+                >
+                  <Text style={s.label}>{m.sender_name || user.name}</Text>
+                  <Text selectable style={s.body}>
+                    {m.body}
+                  </Text>
+                  <Muted>{formatDate(m.created_at)}</Muted>
+                </View>
+              ))}
+            </ScrollView>
+            <View
+              style={{
+                padding: 14,
+                gap: 10,
+                borderTopWidth: 1,
+                borderColor: colors.line,
+              }}
+            >
+              <TextInput
+                accessibilityLabel="Mensagem"
+                placeholder="Escreva sua mensagem…"
+                value={message}
+                onChangeText={setMessage}
+                multiline
+                maxLength={5000}
+                style={[s.input, { maxHeight: 120 }]}
+              />
+              <Button
+                label={busy ? "Enviando…" : "Enviar mensagem"}
+                disabled={busy || !message.trim()}
+                onPress={() =>
+                  run(async () => {
+                    const id = selected.id;
+                    await api(`/processes/${id}/messages`, "POST", {
+                      body: message.trim(),
+                    });
+                    if (activeChat.current !== id) return;
+                    setMessage("");
+                    setMessages(await api(`/processes/${id}/messages`));
+                    chatScroll.current?.scrollToEnd({ animated: true });
+                  })
+                }
+              />
+            </View>
+          </>
+        ) : (
+          <ScrollView
+            contentContainerStyle={s.content}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={busy}
+                onRefresh={() =>
+                  run(async () => {
+                    if (detail) await refreshDetail(detail.id);
+                    else await refresh();
+                  })
+                }
+                tintColor={colors.gold}
+              />
+            }
+          >
+            {!!error && (
+              <Text accessibilityRole="alert" style={s.error}>
+                {error}
+              </Text>
+            )}
+            {loading ? (
+              <Loading />
+            ) : page === "home" ? (
+              <>
+                <Muted>{lawyer ? "ÁREA DO ADVOGADO" : "ÁREA DO CLIENTE"}</Muted>
+                <Title>Olá, {user.name.split(" ")[0]}.</Title>
+                <Muted>Seu acompanhamento, com clareza e proximidade.</Muted>
+                <View style={s.row}>
+                  <View style={s.flex}>
+                    <Card>
+                      <Text style={s.stat}>{processes.length}</Text>
+                      <Muted>Processos</Muted>
+                    </Card>
+                  </View>
+                  <View style={s.flex}>
+                    <Card>
+                      <Text style={s.stat}>{upcoming.length}</Text>
+                      <Muted>Audiências futuras</Muted>
+                    </Card>
+                  </View>
+                </View>
+                {lawyer && (
+                  <Button
+                    label="Cadastrar cliente"
+                    onPress={() => clientForm()}
+                  />
+                )}
+                <Text style={s.subtitle}>Próximos compromissos</Text>
+                {upcoming.length ? (
+                  upcoming.slice(0, 3).map((h) => hearingCard(h))
+                ) : (
+                  <Empty text="Nenhuma audiência futura cadastrada." />
+                )}
+                <Text style={s.subtitle}>Seus processos</Text>
+                {processCards(processes.slice(0, 4))}
+              </>
+            ) : null}
+            {!loading && page === "processes" && !detail && (
+              <>
+                <Title>Processos</Title>
+                <TextInput
+                  accessibilityLabel="Buscar processo"
+                  placeholder="Buscar por número, título ou cliente"
+                  value={query}
+                  onChangeText={setQuery}
+                  style={s.input}
+                />
+                {lawyer && (
+                  <>
+                    <Button
+                      label="Consultar número no DataJud"
+                      onPress={searchProcess}
+                    />
+                    <Button
+                      secondary
+                      label="Vincular processo manualmente"
+                      onPress={() => processForm()}
+                    />
+                  </>
+                )}
+                {processCards(filtered)}
+              </>
+            )}
+            {!loading && page === "processes" && detail && (
+              <>
+                <Button
+                  secondary
+                  label="← Voltar aos processos"
+                  onPress={() => setDetail(null)}
+                />
+                <Title>{detail.title}</Title>
+                <Muted>{cnj(detail.process_num)}</Muted>
+                <View style={s.badge}>
+                  <Text style={s.badgeText}>{detail.status}</Text>
+                </View>
+                <Card>
+                  <Text style={s.subtitle}>Acompanhamento</Text>
+                  <Text style={s.body}>
+                    {detail.court || "Órgão não informado"}
+                  </Text>
+                  <Muted>{detail.area || "Área não informada"}</Muted>
+                  {!!detail.observations && (
+                    <Text style={s.body}>{detail.observations}</Text>
+                  )}
+                  <Muted>
+                    Última consulta ao CNJ:{" "}
+                    {formatDate(detail.datajud_checked_at)}
+                  </Muted>
+                  <Muted>
+                    Atualização na fonte:{" "}
+                    {formatDate(detail.datajud_updated_at)}
+                  </Muted>
+                  <Muted>
+                    A base pública pode ter atraso ou não disponibilizar o
+                    processo. As consultas são feitas pelo advogado.
+                  </Muted>
+                </Card>
+                <Button
+                  label="Conversar sobre este processo"
+                  onPress={() => chat(detail)}
+                />
+                {lawyer && (
+                  <>
+                    <Button
+                      secondary
+                      label="Editar processo"
+                      onPress={editProcess}
+                    />
+                    <Button
+                      secondary
+                      disabled={busy}
+                      label="Consultar DataJud e importar"
+                      onPress={() =>
+                        run(async () => {
+                          const result = await api(
+                            `/processes/${detail.id}/sync`,
+                            "POST",
+                            {},
+                          );
+                          await refreshDetail(detail.id);
+                          Alert.alert(
+                            "Consulta concluída",
+                            `${result.inserted} novas movimentações importadas.`,
+                          );
+                        })
+                      }
+                    />
+                  </>
+                )}
+                <Text style={s.subtitle}>Movimentações</Text>
+                {lawyer && (
+                  <Button
+                    secondary
+                    label="Adicionar orientação"
+                    onPress={() => eventForm("movements")}
+                  />
+                )}{" "}
+                {!detail.movements?.length && (
+                  <Empty text="Sem movimentações cadastradas." />
+                )}
+                {detail.movements?.map((m: Row) => (
+                  <Card key={m.id}>
+                    <Muted>
+                      {formatDate(m.source_occurred_at || m.date)} ·{" "}
+                      {m.source === "datajud" ? "CNJ / DataJud" : "Advogado"}
+                    </Muted>
+                    <Text style={s.subtitle}>{m.title}</Text>
+                    <Text style={s.body}>{m.description}</Text>
+                    {lawyer && m.source !== "datajud" && (
+                      <>
+                        <Button
+                          secondary
+                          label="Editar orientação"
+                          onPress={() => eventForm("movements", m)}
+                        />
+                        <Button
+                          secondary
+                          label="Excluir orientação"
+                          onPress={() =>
+                            confirmDelete(
+                              "Excluir orientação?",
+                              `/movements/${m.id}`,
+                              detail.id,
+                            )
+                          }
+                        />
+                      </>
+                    )}
+                  </Card>
+                ))}
+                <Text style={s.subtitle}>Audiências</Text>
+                {lawyer && (
+                  <Button
+                    secondary
+                    label="Agendar audiência"
+                    onPress={() => eventForm("hearings")}
+                  />
+                )}{" "}
+                {!detail.hearings?.length && (
+                  <Empty text="Sem audiências cadastradas." />
+                )}
+                {detail.hearings?.map((h: Row) => hearingCard(h, true))}
+                <Text style={s.subtitle}>Documentos</Text>
+                {lawyer && (
+                  <Button
+                    secondary
+                    label="Enviar PDF ou imagem"
+                    disabled={busy}
+                    onPress={upload}
+                  />
+                )}{" "}
+                {!detail.documents?.length && (
+                  <Empty text="Sem documentos compartilhados." />
+                )}
+                {detail.documents?.map((d: Row) => (
+                  <Card key={d.id}>
+                    <Text style={s.subtitle}>{d.name}</Text>
+                    <Muted>
+                      {d.status} · {formatDate(d.date_sed)}
+                    </Muted>
+                    <Button
+                      secondary
+                      label="Abrir ou compartilhar documento"
+                      disabled={busy}
+                      onPress={() => run(() => shareDocument(d.id, d.name))}
+                    />
+                    {lawyer && (
+                      <Button
+                        secondary
+                        label="Excluir documento"
+                        onPress={() =>
+                          confirmDelete(
+                            "Excluir documento?",
+                            `/documents/${d.id}`,
+                            detail.id,
+                          )
+                        }
+                      />
+                    )}
+                  </Card>
+                ))}
+              </>
+            )}
+            {!loading && page === "hearings" && (
+              <>
+                <Title>Agenda</Title>
+                <Muted>
+                  Horários de Brasília. Abra o processo para cadastrar ou editar
+                  uma audiência.
+                </Muted>
+                {hearings.length ? (
+                  hearings.map((h) => hearingCard(h))
+                ) : (
+                  <Empty text="Nenhuma audiência cadastrada." />
+                )}
+              </>
+            )}
+            {!loading && page === "messages" && !selected && (
+              <>
+                <Title>Conversas</Title>
+                <Muted>
+                  Escolha o processo para conversar com{" "}
+                  {lawyer ? "seu cliente" : "seu advogado"}.
+                </Muted>
+                {processCards(processes, true)}
+              </>
+            )}
+            {!loading && page === "clients" && lawyer && (
+              <>
+                <Title>Clientes</Title>
+                <Button
+                  label="Cadastrar cliente"
+                  onPress={() => clientForm()}
+                />
+                {!clients.length && (
+                  <Empty text="Cadastre seu primeiro cliente." />
+                )}
+                {clients.map((c) => (
+                  <Card key={c.id}>
+                    <Text style={s.subtitle}>{c.name}</Text>
+                    <Muted>{c.email}</Muted>
+                    <Text style={s.body}>
+                      {c.phone || "Telefone não informado"}
+                    </Text>
+                    <Text style={s.badgeText}>
+                      {c.activated ? "Conta ativada" : "Ativação pendente"}
+                    </Text>
+                    <Button
+                      secondary
+                      label="Editar cliente"
+                      onPress={() => clientForm(c)}
+                    />
+                    {!c.activated && (
+                      <Button
+                        secondary
+                        label="Gerar e compartilhar novo convite"
+                        disabled={busy}
+                        onPress={() =>
+                          run(async () =>
+                            shareInvite(
+                              await api(`/clients/${c.id}/invite`, "POST", {}),
+                            ),
+                          )
+                        }
+                      />
+                    )}
+                  </Card>
+                ))}
+              </>
+            )}
+            {!loading && page === "notifications" && (
+              <>
+                <Title>Notificações</Title>
+                {!notifications.length && <Empty text="Nenhuma notificação." />}
+                {notifications.map((n) => (
+                  <Card key={n.id}>
+                    <Text style={s.subtitle}>
+                      {!n.read ? "● " : ""}
+                      {n.title}
+                    </Text>
+                    <Text style={s.body}>{n.description}</Text>
+                    <Muted>{formatDate(n.created_at || n.date)}</Muted>
+                    {!n.read && (
+                      <Button
+                        secondary
+                        label="Marcar como lida"
+                        onPress={() =>
+                          run(async () => {
+                            await api(
+                              `/notifications/${n.id}/read`,
+                              "PATCH",
+                              {},
+                            );
+                            await refresh();
+                          })
+                        }
+                      />
+                    )}
+                    <Button
+                      secondary
+                      label="Excluir notificação"
+                      onPress={() =>
+                        confirmDelete(
+                          "Excluir notificação?",
+                          `/notifications/${n.id}`,
+                        )
+                      }
+                    />
+                  </Card>
+                ))}
+              </>
+            )}
+            {!loading && (page === "more" || page === "account") && (
+              <>
+                <Title>
+                  {page === "account" ? "Minha conta" : "Seu espaço"}
+                </Title>
+                <Card>
+                  <Text style={s.subtitle}>{user.name}</Text>
+                  <Muted>{user.email}</Muted>
+                  <View style={s.badge}>
+                    <Text style={s.badgeText}>
+                      {lawyer ? "Advogado" : "Cliente"}
+                    </Text>
+                  </View>
+                </Card>
+                {lawyer && (
+                  <Button
+                    secondary
+                    label="Gerenciar clientes"
+                    onPress={() => go("clients")}
+                  />
+                )}
+                <Button
+                  secondary
+                  label={`Notificações (${unread} não lidas)`}
+                  onPress={() => go("notifications")}
+                />
+                <Button
+                  secondary
+                  label="Editar meus dados"
+                  onPress={() =>
+                    setForm({
+                      title: "Meus dados",
+                      fields: [nameField, phoneField],
+                      initial: { name: user.name, phone: user.phone || "" },
+                      save: async (v) => {
+                        await api("/account", "PATCH", v);
+                        updateUser(await api("/auth/me"));
+                      },
+                    })
+                  }
+                />
+                <Button
+                  secondary
+                  label="Alterar senha"
+                  onPress={() =>
+                    setForm({
+                      title: "Alterar senha",
+                      fields: [
+                        {
+                          name: "currentPassword",
+                          label: "Senha atual",
+                          secure: true,
+                          required: true,
+                        },
+                        passwordField,
+                      ],
+                      save: async (v) => {
+                        const result = await api(
+                          "/account/password",
+                          "POST",
+                          v,
+                        );
+                        await saveSession(result.sessionToken);
+                        Alert.alert(
+                          "Senha alterada",
+                          "As sessões anteriores foram encerradas.",
+                        );
+                      },
+                    })
+                  }
+                />
+                <Button
+                  label="Sair da conta"
+                  disabled={busy}
+                  onPress={() =>
+                    run(async () => {
+                      await api("/auth/logout", "POST", {});
+                      await clearSession();
+                      onLogout();
+                    })
+                  }
+                />
+                <Muted>Martins Advogados · Versão 1.0.0</Muted>
+              </>
+            )}
+          </ScrollView>
+        )}
+      </KeyboardAvoidingView>
+      <View style={s.nav}>
+        {tabs.map((t) => (
+          <Pressable
+            key={t.id}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: page === t.id }}
+            accessibilityLabel={t.label}
+            onPress={() => go(t.id)}
+            style={s.navItem}
+          >
+            <Text style={[s.navIcon, page === t.id && { color: colors.gold }]}>
+              {t.mark}
+            </Text>
+            <Text style={[s.navText, page === t.id && { color: colors.navy }]}>
+              {t.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {form && (
+        <FormModal
+          key={form.title}
+          title={form.title}
+          fields={form.fields}
+          initial={form.initial}
+          onSave={form.save}
+          onClose={() => setForm(null)}
+        />
+      )}
+    </SafeAreaView>
+  );
 }
