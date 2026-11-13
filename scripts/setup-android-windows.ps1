@@ -1,7 +1,7 @@
 # Run from the project root. Compatible with Windows PowerShell 5.1 and PowerShell 7.
 [CmdletBinding()]
 param(
-    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$ProjectRoot,
     [string]$SdkPath,
     [string]$JavaPath,
     [string]$NdkRoot = 'C:\ndk',
@@ -15,6 +15,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $script:BackupSuffix = '.backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+
+function Resolve-ProjectRoot([string]$ExplicitRoot, [string]$ScriptDirectory, [string]$CurrentDirectory) {
+    if (![string]::IsNullOrWhiteSpace($ExplicitRoot)) { return $ExplicitRoot }
+    if (![string]::IsNullOrWhiteSpace($ScriptDirectory)) { return Split-Path -Parent $ScriptDirectory }
+    return $CurrentDirectory
+}
 
 function Set-LocalProperty([string]$Path, [string]$Key, [string]$Value) {
     $lines = @()
@@ -53,6 +59,9 @@ if ($SelfTest) {
     $directory = Join-Path ([IO.Path]::GetTempPath()) ('martins-setup-test-' + [guid]::NewGuid())
     [void](New-Item -ItemType Directory -Path $directory)
     try {
+        Assert-True ((Resolve-ProjectRoot 'C:\dev\ma' '' 'C:\other') -eq 'C:\dev\ma') 'Explicit project root ignored.'
+        Assert-True ((Resolve-ProjectRoot '' 'C:\dev\ma\scripts' 'C:\other') -eq 'C:\dev\ma') 'Script directory resolution failed.'
+        Assert-True ((Resolve-ProjectRoot '' '' 'C:\dev\ma') -eq 'C:\dev\ma') 'Empty script directory fallback failed.'
         $file = Join-Path $directory 'local.properties'
         [IO.File]::WriteAllText($file, "# preserve comment`r`nsdk.dir=old`r`nother=value`r`nsdk.dir:duplicate`r`n")
         Set-LocalProperty $file 'sdk.dir' 'C\:/Android/Sdk'
@@ -72,6 +81,8 @@ if ($SelfTest) {
 }
 try {
     Assert-True ($env:OS -eq 'Windows_NT') 'Execute este script no Windows.'
+    # Resolve only after parameter binding. Some hosts leave PSScriptRoot empty in parameter defaults.
+    $ProjectRoot = Resolve-ProjectRoot $ProjectRoot $PSScriptRoot (Get-Location).Path
     $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
     Assert-True (Test-Path -LiteralPath (Join-Path $ProjectRoot 'package.json')) 'package.json nao encontrado. Informe -ProjectRoot C:\dev\ma.'
     $package = Get-Content -LiteralPath (Join-Path $ProjectRoot 'package.json') -Raw | ConvertFrom-Json
