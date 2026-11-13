@@ -8,6 +8,34 @@ Aplicativo nativo Android/iOS com Expo SDK 58, React Native 0.88 e TypeScript. A
 - Para compilar Android localmente: Android Studio, SDK Android e JDK compatíveis com React Native 0.88. Para iOS: macOS e Xcode compatíveis com Expo SDK 58.
 - Use um development build. Não dependa de compatibilidade do Expo Go instalado na loja. Configuração nativa: https://docs.expo.dev/guides/local-app-development/ e https://docs.expo.dev/develop/development-builds/create-a-build/.
 
+## Preparar o Windows automaticamente
+
+Mantenha o projeto em uma pasta curta, sem espaços, como `C:\dev\ma`. O script `scripts/setup-android-windows.ps1` é compatível com Windows PowerShell 5.1 e PowerShell 7 e trata os problemas encontrados na compilação nativa: JAVA_HOME/ANDROID_HOME ausentes, NDK em caminho com espaços e Ninja antigo.
+
+Depois de `npm ci`, com a pasta Android já gerada, feche o Android Studio e pare builds em execução. No PowerShell, execute:
+
+```powershell
+cd C:\dev\ma
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-android-windows.ps1 -CheckOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-android-windows.ps1 -InstallCMake -Build
+```
+
+ExecutionPolicy Bypass vale somente para esse processo, não altera a política permanente. O script valida o nome do projeto antes de agir; não lê nem modifica `.env`, não envia dados à rede e não imprime credenciais. A opção InstallCMake usa o sdkmanager oficial para baixar CMake 3.31.6 se necessário. Se faltarem Android SDK Command-line Tools (latest), instale pelo Android Studio → SDK Manager → SDK Tools. Licenças não são aceitas automaticamente.
+
+Se o diagnóstico indicar caminhos longos desabilitados, abra PowerShell **como administrador na mesma conta Windows**, execute abaixo e reinicie o computador. Depois volte ao terminal normal e repita o comando com InstallCMake e Build:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\dev\ma\scripts\setup-android-windows.ps1 -EnableLongPaths
+```
+
+Essa opção altera somente LongPathsEnabled no registro e encerra solicitando reinicialização quando muda o valor. Não altera políticas de segurança do PowerShell.
+
+O script identifica o NDK exigido em node_modules/react-native/gradle/libs.versions.toml, copia essa versão para `C:\ndk` (preservando a origem), configura sdk.dir/ndk.dir em android/local.properties e android.cmakeVersion em android/gradle.properties. Cria backups .properties.backup-* e preserva comentários e outras propriedades. Remove somente uma lista explícita de caches/builds do projeto e dos módulos expo-modules-core e safe-area-context. Não apaga o cache global Gradle ou código nativo. Define JAVA_HOME e ANDROID_HOME do usuário, e usa o PATH apenas no processo atual. Se SDK/JDK estiverem em outro local, informe `-SdkPath` e `-JavaPath`.
+
+Se a pasta android não existir, execute `npx expo prebuild --platform android` antes do script. Não use prebuild --clean sobre alterações nativas sem backup. Não é necessário reinstalar todas as dependências a cada tentativa.
+
+Limite: a checagem automatizada testa preservação de propriedades, backups, idempotência e caminhos; não comprova que todo o build nativo funciona no seu computador. Se a compilação falhar, envie o primeiro erro e o trecho What went wrong. Referências: [Expo: caminhos longos](https://docs.expo.dev/troubleshooting/windows-long-paths/) e [relato do compilador NDK em caminho com espaços](https://github.com/software-mansion/react-native-reanimated/issues/8269).
+
 ## Testar no Windows / Android
 
 1. Atualize e inicie a API na porta 3333 com seu DATABASE_URL privado. A API já escuta em 0.0.0.0.

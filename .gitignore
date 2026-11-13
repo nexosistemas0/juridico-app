@@ -141,3 +141,6 @@ android/
 ios/
 .env.*
 !.env.example
+
+# Local Android setup backups
+*.properties.backup-*
