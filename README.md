@@ -104,7 +104,7 @@ npm run build
 
 CI executa TypeScript, testes de convite/configuração, exportação Android/iOS e build do portal web. A API tem testes de sessão mobile, rotação, revogação e compatibilidade web. Validação no aparelho físico, teclado, permissões, download/compartilhamento e deep links ainda é necessária. O ambiente de desenvolvimento desta entrega não tem emulador Android/iOS.
 
-Sem assinatura eletrônica, push, monitoramento DataJud automático ou recuperação de senha por e-mail. A consulta real DataJud permanece pendente. Sem dados fictícios nas telas do aplicativo.
+O portal web agora tem assinatura eletrônica simples e lembretes de audiência. Permanecem fora do escopo push, monitoramento DataJud automático e recuperação de senha por e-mail. A consulta real DataJud permanece pendente. Sem dados fictícios nas telas do aplicativo.
 
 ## Portal web anterior
 
@@ -115,3 +115,31 @@ npm run dev
 ```
 
 A API precisa permitir a origem web em APP_ORIGIN. App nativo não envia Origin de navegador; não é necessário desabilitar CORS. Para servir o portal compilado pela API, FRONTEND_DIST agora aponta para `../juridico-app/web/dist`.
+
+
+## Portal responsivo, procurações e agenda (atualização)
+
+O aplicativo React Native foi preservado. As novas telas do advogado ficam em `web/` (React/Vite): Procurações, agenda por cliente com processo opcional, lista/calendário, busca paginada de clientes por nome/e-mail/telefone e histórico DataJud. O cliente assina pelo navegador do celular usando o link pessoal; não precisa instalar o app para assinar. Cliente e advogado autenticados também encontram o PDF em Procurações no portal. O app nativo continua exibindo a agenda e agora identifica cancelamentos; a gestão nova permanece no portal web.
+
+No Windows, em dois terminais:
+
+```powershell
+# Terminal 1, pasta juridico-api-main: configure .env e aplique migrations antes
+npm ci
+npm run migrate
+npm run dev
+```
+
+```powershell
+# Terminal 2, pasta juridico-app/web
+npm ci
+npm run dev
+```
+
+Abra http://localhost:5173. Vite encaminha `/api` para http://127.0.0.1:3333. A autenticação web usa cookie HttpOnly. Configure APP_ORIGIN da API com a origem exata; não abra o HTML pelo explorador. O portal protege as telas por sessão e perfil, e o servidor verifica todos os vínculos. Em produção, `npm run build` dentro de web e `FRONTEND_DIST=../juridico-app/web/dist` na API servem ambos na mesma origem.
+
+Para testar o link no celular na rede local: `npm run dev -- --host 0.0.0.0` dentro de web; configure PUBLIC_WEB_URL e APP_ORIGIN da API como `http://IP-DO-PC:5173`. Restrinja o firewall à rede privada. Para clientes externos use HTTPS público. Token de assinatura não deve ser compartilhado com terceiros. No celular, a área de desenho usa eventos de toque/caneta; também existe a opção de nome digitado.
+
+A nova API exige a migration `20261114013314_assinaturas_agenda_busca.sql`, DATAJUD_API_KEY para consultas, PUBLIC_WEB_URL para links e RESEND_API_KEY/MAIL_FROM + cron a cada minuto para lembretes. Veja o README da API para limites, segurança, retenção e instruções do cron. Não colocar essas chaves em EXPO_PUBLIC_ ou VITE_.
+
+Testes desta entrega: 3 testes de domínio mobile, typecheck mobile, 16 testes API e builds API/web. Sem alteração da stack de compilação Android. A validação visual do navegador ficou pendente por restrição de execução do Chromium neste ambiente; testar layout 390/768/1440 px, desenho, teclado, download e links no dispositivo real.

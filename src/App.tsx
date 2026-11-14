@@ -739,7 +739,7 @@ function Portal({
   );
   const upcoming = hearings.filter(
     (h) =>
-      new Date(
+      !h.cancelled_at && new Date(
         `${h.date?.slice(0, 10)}T${h.hour || "00:00:00"}-03:00`,
       ).getTime() >= Date.now(),
   );
@@ -771,7 +771,7 @@ function Portal({
   const hearingCard = (h: Row, editable = false) => (
     <Card key={h.id}>
       <Text style={s.eyebrow}>AUDIÊNCIA</Text>
-      <Text style={s.subtitle}>{h.type}</Text>
+      <Text style={s.subtitle}>{h.type}{h.cancelled_at ? " · Cancelada" : ""}</Text>
       <Text style={s.body}>
         {formatDate(h.date)} · {h.hour?.slice(0, 5)} (Brasília)
       </Text>
@@ -794,7 +794,7 @@ function Portal({
           }
         />
       )}{" "}
-      {editable && lawyer && (
+      {editable && lawyer && !h.cancelled_at && (
         <>
           <Button
             secondary
